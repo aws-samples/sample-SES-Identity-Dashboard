@@ -1,0 +1,683 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Centralized SES Identity Scanner — Management Account
+
+Parameters:
+  ScanMode:
+    Type: String
+    Default: organization
+    AllowedValues:
+      - organization
+      - self
+    Description: >-
+      organization (default) discovers every active account in your AWS
+      Organization and assumes the SES-Identity-Reader role in each. self scans
+      only the account this stack is deployed into using the scanner Lambda's
+      own execution role — no organizations:ListAccounts call and no
+      cross-account role assumption, so the reader-role StackSet is not needed.
+      In organization mode the scanner also automatically falls back to a
+      self-scan if AWS Organizations is not available.
+
+  OrganizationId:
+    Type: String
+    Default: ''
+    Description: >-
+      Your AWS Organization ID. Required for organization scan mode; scopes
+      cross-account sts:AssumeRole via an aws:ResourceOrgID condition so the
+      scanner can only assume reader roles in accounts that belong to this
+      organization. Leave blank for self scan mode.
+    AllowedPattern: '^(o-[a-z0-9]{10,32})?$'
+
+  ExternalId:
+    Type: String
+    Default: ''
+    Description: >-
+      The same per-deployment secret you supplied to the reader-role StackSet
+      (ses-reader-role.yaml). Passed to sts:AssumeRole as the ExternalId.
+      Required for organization scan mode; leave blank for self scan mode.
+    NoEcho: true
+    MaxLength: 128
+
+  ScannerRoleName:
+    Type: String
+    Description: >-
+      Name given to the scanner Lambda's IAM role. Must match the
+      ScannerRoleName supplied to the reader-role StackSet so the reader role's
+      aws:PrincipalArn condition matches.
+    Default: SES-Identity-Scanner-Role
+
+  AlertEmail:
+    Type: String
+    Description: >-
+      Email address that receives scan-error summaries and CloudWatch alarm
+      notifications. You must confirm the SNS subscription email before
+      notifications are delivered.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+  ScheduleExpression:
+    Type: String
+    Default: 'rate(1 day)'
+
+  LogRetentionInDays:
+    Type: Number
+    Default: 90
+    Description: Retention for the scanner Lambda's CloudWatch log group.
+
+Resources:
+  AccessLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'ses-dashboard-v2-logs-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Sub 'ses-dashboard-v2-logs-${AWS::AccountId}'
+        LogFilePrefix: self-access-logs/
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            Status: Enabled
+            ExpirationInDays: 365
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 365
+
+  AccessLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3ServerAccessLogsPolicy
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: s3:PutObject
+            Resource:
+              - !Sub '${AccessLogsBucket.Arn}/access-logs/*'
+              - !Sub '${AccessLogsBucket.Arn}/self-access-logs/*'
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  - !GetAtt ScanResultsBucket.Arn
+                  - !GetAtt AccessLogsBucket.Arn
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt AccessLogsBucket.Arn
+              - !Sub '${AccessLogsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  ScanResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'ses-dashboard-v2-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogsBucket
+        LogFilePrefix: access-logs/
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # Archived historical scans: current versions expire after 90 days
+          # (transitioned to IA at 30 days), noncurrent versions after 90 days.
+          - Id: ExpireOldScans
+            Status: Enabled
+            Prefix: scans/archive/
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+          - Id: TransitionToIA
+            Status: Enabled
+            Prefix: scans/archive/
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+          # Live, continuously-overwritten prefixes (scans/latest/,
+          # scans/summary/, athena-results/). Because versioning is enabled,
+          # every daily overwrite of these files leaves a retained noncurrent
+          # version that would otherwise accumulate copies of every org email
+          # address/domain indefinitely. These rules expire only the NONCURRENT
+          # versions — the current fail-closed "latest" pointer is always
+          # preserved. Do NOT add ExpirationInDays here.
+          - Id: ExpireNoncurrentLatest
+            Status: Enabled
+            Prefix: scans/latest/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+          - Id: ExpireNoncurrentSummary
+            Status: Enabled
+            Prefix: scans/summary/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+          - Id: ExpireNoncurrentAthenaResults
+            Status: Enabled
+            Prefix: athena-results/
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+
+  ScanResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ScanResultsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ScanResultsBucket.Arn
+              - !Sub '${ScanResultsBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-alerts'
+      KmsMasterKeyId: alias/aws/sns
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  ScannerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-scanner-dlq'
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: alias/aws/sqs
+
+  EnvVarKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Encrypts ${AWS::StackName} scanner Lambda environment variables (holds the ExternalId secret)'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootAccountManagement
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  ScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/SES-Identity-Scanner-v2
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ScannerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref ScannerRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ScannerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Organization discovery. Harmless in self mode; the scanner does
+              # not call it when SCAN_MODE=self.
+              - Effect: Allow
+                Action:
+                  - organizations:ListAccounts
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeRegions
+                Resource: '*'
+              # Cross-account assume for organization mode, scoped to the org.
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: 'arn:aws:iam::*:role/SES-Identity-Reader'
+                Condition:
+                  StringEquals:
+                    aws:ResourceOrgID: !Ref OrganizationId
+              # SES read access for self mode (scanning this account directly)
+              # and for the organization-mode fallback when Organizations is
+              # unavailable.
+              - Effect: Allow
+                Action:
+                  - ses:ListEmailIdentities
+                  - ses:GetEmailIdentity
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ScanResultsBucket.Arn
+                  - !Sub '${ScanResultsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref AlertTopic
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt ScannerDLQ.Arn
+
+  ScannerFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_117:Function only calls AWS service APIs (Organizations, STS, SES, S3, SNS); VPC attachment would require NAT/VPC endpoints for no security benefit.
+    DependsOn: ScannerLogGroup
+    Properties:
+      FunctionName: SES-Identity-Scanner-v2
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt ScannerRole.Arn
+      Timeout: 900
+      MemorySize: 512
+      ReservedConcurrentExecutions: 2
+      KmsKeyArn: !GetAtt EnvVarKey.Arn
+      DeadLetterConfig:
+        TargetArn: !GetAtt ScannerDLQ.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ScanResultsBucket
+          SNS_TOPIC_ARN: !Ref AlertTopic
+          EXTERNAL_ID: !Ref ExternalId
+          SCAN_MODE: !Ref ScanMode
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          def get_enabled_regions(session=None):
+              ec2 = (session or boto3).client('ec2')
+              regions = ec2.describe_regions(
+                  Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}]
+              )
+              return [r['RegionName'] for r in regions['Regions']]
+
+          def scan_identities(account_id, regions, session):
+              """Scan SES identities for one account using the given boto3 session.
+
+              Returns (results, regions_failed, identities_failed). Per-region and
+              per-identity failures are counted and reported rather than dropped.
+              """
+              results = []
+              regions_failed = []
+              identities_failed = 0
+
+              for region in regions:
+                  try:
+                      ses = session.client('sesv2', region_name=region)
+                      identities = []
+                      next_token = None
+                      while True:
+                          kwargs = {'PageSize': 100}
+                          if next_token:
+                              kwargs['NextToken'] = next_token
+                          resp = ses.list_email_identities(**kwargs)
+                          identities.extend(resp.get('EmailIdentities', []))
+                          next_token = resp.get('NextToken')
+                          if not next_token:
+                              break
+
+                      for identity in identities:
+                          name = identity['IdentityName']
+                          try:
+                              detail = ses.get_email_identity(EmailIdentity=name)
+                              results.append({
+                                  'account_id': account_id,
+                                  'region': region,
+                                  'identity_name': name,
+                                  'identity_type': detail.get('IdentityType', 'UNKNOWN'),
+                                  'verified': detail.get('VerifiedForSendingStatus', False),
+                                  'dkim_status': detail.get('DkimAttributes', {}).get('Status', 'NOT_STARTED'),
+                                  'dkim_signing_enabled': detail.get('DkimAttributes', {}).get('SigningEnabled', False),
+                                  'dkim_key_length': detail.get('DkimAttributes', {}).get('CurrentSigningKeyLength', 'N/A'),
+                                  'mail_from_status': detail.get('MailFromAttributes', {}).get('MailFromDomainStatus', 'N/A'),
+                                  'mail_from_domain': detail.get('MailFromAttributes', {}).get('MailFromDomain', ''),
+                                  'sending_enabled': detail.get('SendingEnabled', False),
+                                  'scan_timestamp': datetime.now(timezone.utc).isoformat()
+                              })
+                          except Exception as e:
+                              # Do not log the identity name (PII). Account and region are enough to triage.
+                              identities_failed += 1
+                              print(f"WARN: get_email_identity failed in {account_id}/{region}: {type(e).__name__}")
+                  except Exception as e:
+                      # A region we could not read is an unaudited region: record it, do not drop it silently.
+                      regions_failed.append(region)
+                      print(f"WARN: Region {region} failed for {account_id}: {type(e).__name__}")
+                      continue
+              return results, regions_failed, identities_failed
+
+          def assume_session(account_id, external_id):
+              """Return a boto3 Session for a member account via the reader role."""
+              sts = boto3.client('sts')
+              creds = sts.assume_role(
+                  RoleArn=f'arn:aws:iam::{account_id}:role/SES-Identity-Reader',
+                  RoleSessionName='ses-scanner',
+                  ExternalId=external_id
+              )['Credentials']
+              return boto3.Session(
+                  aws_access_key_id=creds['AccessKeyId'],
+                  aws_secret_access_key=creds['SecretAccessKey'],
+                  aws_session_token=creds['SessionToken']
+              )
+
+          def list_org_accounts():
+              """Return active account IDs via Organizations, or None if unavailable."""
+              try:
+                  org = boto3.client('organizations')
+                  accounts = []
+                  paginator = org.get_paginator('list_accounts')
+                  for page in paginator.paginate():
+                      accounts.extend([a['Id'] for a in page['Accounts'] if a['Status'] == 'ACTIVE'])
+                  return accounts
+              except Exception as e:
+                  print(f"WARN: Organizations not available ({type(e).__name__}); falling back to self-scan.")
+                  return None
+
+          def lambda_handler(event, context):
+              s3 = boto3.client('s3')
+              sns = boto3.client('sns')
+              bucket = os.environ['BUCKET_NAME']
+              topic_arn = os.environ['SNS_TOPIC_ARN']
+              external_id = os.environ.get('EXTERNAL_ID', '')
+              scan_mode = os.environ.get('SCAN_MODE', 'organization')
+
+              this_account = boto3.client('sts').get_caller_identity()['Account']
+
+              # Decide which accounts to scan and how to reach them.
+              # self mode  -> scan only this account with the execution role.
+              # org mode    -> list org accounts; if Organizations is unavailable,
+              #                fall back to scanning this account directly.
+              use_assume_role = False
+              if scan_mode == 'self':
+                  accounts = [this_account]
+              else:
+                  org_accounts = list_org_accounts()
+                  if org_accounts is None:
+                      accounts = [this_account]
+                  else:
+                      accounts = org_accounts
+                      use_assume_role = True
+
+              print(f"Scan mode: {scan_mode}; scanning {len(accounts)} account(s); assume_role={use_assume_role}")
+              base_regions = get_enabled_regions()
+              print(f"Discovered {len(base_regions)} enabled regions in the scanner account")
+
+              all_results = []
+              errors = []
+              accounts_succeeded = 0
+              total_regions_failed = 0
+              total_identities_failed = 0
+              for account_id in accounts:
+                  try:
+                      if use_assume_role and account_id != this_account:
+                          session = assume_session(account_id, external_id)
+                          regions = get_enabled_regions(session)
+                      else:
+                          session = boto3.Session()
+                          regions = base_regions
+                      results, regions_failed, identities_failed = scan_identities(account_id, regions, session)
+                      all_results.extend(results)
+                      accounts_succeeded += 1
+                      total_regions_failed += len(regions_failed)
+                      total_identities_failed += identities_failed
+                      if regions_failed or identities_failed:
+                          errors.append({
+                              'account_id': account_id,
+                              'regions_failed': regions_failed,
+                              'identities_failed': identities_failed
+                          })
+                      print(f"Account {account_id}: {len(results)} identities, "
+                            f"{len(regions_failed)} regions failed, {identities_failed} identities failed")
+                  except Exception as e:
+                      # Assume-role or any other account-level failure is recorded in-band so it reaches SNS.
+                      errors.append({'account_id': account_id, 'error': f"{type(e).__name__}: {e}"})
+                      print(f"ERROR: Account {account_id} failed: {type(e).__name__}")
+
+              timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d/%H%M%S')
+              now_iso = datetime.now(timezone.utc).isoformat()
+              summary = {
+                  'scan_mode': scan_mode,
+                  'accounts_total': len(accounts),
+                  'accounts_succeeded': accounts_succeeded,
+                  'accounts_failed': len(accounts) - accounts_succeeded,
+                  'total_identities': len(all_results),
+                  'regions_failed': total_regions_failed,
+                  'identities_failed': total_identities_failed,
+                  'error_count': len(errors),
+                  'scan_timestamp': now_iso
+              }
+
+              # Always publish the summary so staleness/incompleteness is detectable by the dashboard.
+              s3.put_object(
+                  Bucket=bucket,
+                  Key='scans/summary/latest.json',
+                  Body=json.dumps({'summary': summary, 'errors': errors}, indent=2),
+                  ContentType='application/json'
+              )
+
+              # Fail-closed ONLY when zero identities were collected AND at least one
+              # account/region/identity failed. A genuinely empty org (every account
+              # scanned cleanly, no identities) is a valid result and is published
+              # normally. Raising marks the invocation as an Error (trips
+              # SES-Scanner-Errors) and preserves the previous scans/latest instead of
+              # publishing an empty report that reads as "no SES identities in the org".
+              if accounts and not all_results and errors:
+                  msg = json.dumps({'summary': summary, 'errors': errors}, indent=2)
+                  sns.publish(TopicArn=topic_arn, Subject='SES Scanner - FAILED (zero identities collected)', Message=msg)
+                  raise RuntimeError(
+                      f"Scanned {len(accounts)} accounts but collected 0 identities with "
+                      f"{len(errors)} failures; preserving previous scans/latest."
+                  )
+
+              key = f'scans/archive/{timestamp}/ses-identities-{len(accounts)}accounts-{len(all_results)}identities.jsonl'
+              jsonl_body = '\n'.join(json.dumps(r) for r in all_results)
+              s3.put_object(Bucket=bucket, Key=key, Body=jsonl_body, ContentType='application/jsonl')
+              s3.put_object(Bucket=bucket, Key='scans/latest/ses-identities-latest.jsonl', Body=jsonl_body, ContentType='application/jsonl')
+              summary['s3_key'] = key
+
+              if errors:
+                  sns.publish(
+                      TopicArn=topic_arn,
+                      Subject='SES Scanner - Partial Failures Detected',
+                      Message=json.dumps({'summary': summary, 'errors': errors}, indent=2)
+                  )
+
+              print(f"Done: {json.dumps(summary)}")
+              return summary
+
+  ScanSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Daily SES identity scan
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ScannerFunction.Arn
+          Id: ScannerTarget
+
+  ScanPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ScannerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScanSchedule.Arn
+
+  ScanMissedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SES-Scanner-Missed-Execution
+      AlarmDescription: No Lambda invocation in 25 hours (dead man's switch)
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ScannerFunction
+      Statistic: Sum
+      Period: 90000
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+  ScanErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SES-Scanner-Errors
+      AlarmDescription: >-
+        Scanner Lambda reported one or more errored invocations. Fires on a
+        failed run, including the fail-closed "zero identities collected" path.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ScannerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+  ScanDLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SES-Scanner-DLQ-Depth
+      AlarmDescription: One or more scanner invocations landed in the dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ScannerDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub '${AWS::StackName}-ses-identity'
+      State: ENABLED
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetricsEnabled: true
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${ScanResultsBucket}/athena-results/'
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+
+  AthenaDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: ses_identity_dashboard
+
+  AthenaTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref AthenaDatabase
+      TableInput:
+        Name: ses_identities
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+        StorageDescriptor:
+          Location: !Sub 's3://${ScanResultsBucket}/scans/latest/'
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters:
+              ignore.malformed.json: 'true'
+          Columns:
+            - Name: account_id
+              Type: string
+            - Name: region
+              Type: string
+            - Name: identity_name
+              Type: string
+            - Name: identity_type
+              Type: string
+            - Name: verified
+              Type: boolean
+            - Name: dkim_status
+              Type: string
+            - Name: dkim_signing_enabled
+              Type: boolean
+            - Name: dkim_key_length
+              Type: string
+            - Name: mail_from_status
+              Type: string
+            - Name: mail_from_domain
+              Type: string
+            - Name: sending_enabled
+              Type: boolean
+            - Name: scan_timestamp
+              Type: string
+
+Outputs:
+  ScanMode:
+    Value: !Ref ScanMode
+  BucketName:
+    Value: !Ref ScanResultsBucket
+  LambdaArn:
+    Value: !GetAtt ScannerFunction.Arn
+  AthenaDatabaseName:
+    Value: !Ref AthenaDatabase
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup
+  AlertTopicArn:
+    Value: !Ref AlertTopic

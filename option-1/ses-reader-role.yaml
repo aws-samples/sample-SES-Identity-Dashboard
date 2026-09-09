@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Read-only role for centralized SES identity scanning
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    Description: Account ID of the management/scanner account
+    AllowedPattern: '^\d{12}$'
+
+  OrganizationId:
+    Type: String
+    Description: >-
+      Your AWS Organization ID. Restricts role assumption to principals that
+      belong to this organization (aws:PrincipalOrgID).
+    AllowedPattern: '^o-[a-z0-9]{10,32}$'
+
+  ScannerRoleName:
+    Type: String
+    Description: >-
+      Name of the scanner IAM role in the management account that is permitted
+      to assume this reader role. Must match the ScannerRoleName used by the
+      scanner stack.
+    Default: SES-Identity-Scanner-Role
+
+  ExternalId:
+    Type: String
+    Description: >-
+      A unique secret you generate for this deployment (8-128 chars). Supply the
+      SAME value to the scanner stack. Do not reuse the sample value or share it
+      publicly.
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 128
+
+Resources:
+  SESIdentityReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SES-Identity-Reader
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${ManagementAccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:PrincipalArn: !Sub 'arn:aws:iam::${ManagementAccountId}:role/${ScannerRoleName}'
+                aws:PrincipalOrgID: !Ref OrganizationId
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: SESReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:ListEmailIdentities
+                  - ses:GetEmailIdentity
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeRegions
+                Resource: '*'
