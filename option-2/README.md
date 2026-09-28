@@ -4,11 +4,9 @@ For organizations with 50+ accounts where the single Lambda approach exceeds the
 
 ## Prerequisites
 
-- Complete Step 1 from Option 1 (deploy the IAM reader role via StackSets) — **only for `organization` scan mode**
-- The SES-Identity-Reader role must exist in all member accounts (organization mode)
+- Complete Step 1 from Option 1 (deploy the IAM reader role via StackSets)
+- The SES-Identity-Reader role must exist in all member accounts
 - Use the **same** `ExternalId` and `ScannerRoleName` you supplied to the reader-role StackSet
-
-> **Standalone account?** Set `ScanMode` to `self` and skip the reader-role prerequisite entirely — the per-account scanner reads SES identities in its own account using its Lambda execution role.
 
 ## Deployment
 
@@ -17,7 +15,6 @@ aws cloudformation deploy \
   --template-file ses-scanner-stepfunctions.yaml \
   --stack-name ses-identity-dashboard-sfn \
   --parameter-overrides \
-      ScanMode=organization \
       OrganizationId=o-xxxxxxxxxx \
       ExternalId=<YOUR_GENERATED_SECRET> \
       AlertEmail=you@example.com \
@@ -26,17 +23,12 @@ aws cloudformation deploy \
 
 After deployment, **confirm the SNS subscription** in the email sent to `AlertEmail`.
 
-## Scan Modes
-
-- **`organization`** (default) — discovers all active accounts via AWS Organizations and assumes the `SES-Identity-Reader` role in each. If AWS Organizations is not available, the scanner automatically falls back to a self-scan of the deploying account.
-- **`self`** — scans only the account the stack is deployed into using the Lambda execution role. No `organizations:ListAccounts` call and no cross-account role assumption, so the reader-role StackSet (Step 1 of Option 1) is not needed.
-
 ## How It Works
 
 1. EventBridge triggers the Step Functions state machine daily
-2. **ListAccounts Lambda** — in `organization` mode, discovers all active accounts and returns a JSON array; in `self` mode (or when Organizations is unavailable), returns only the deploying account
+2. **ListAccounts Lambda** — discovers all active accounts, returns a JSON array
 3. **Map state** (inline, `MaxConcurrency: 40`) — processes accounts in parallel
-4. **Per-Account Scanner Lambda** — scans one account across all enabled Regions; per-region and per-identity failures are reported in-band, not silently dropped. In `self` mode it reads its own account directly without assuming the reader role.
+4. **Per-Account Scanner Lambda** — scans one account across all enabled Regions; per-region and per-identity failures are reported in-band, not silently dropped
 5. **Consolidate Lambda** — merges per-account results into `scans/latest/results.jsonl`, writes a run summary to `scans/summary/latest.json`, and **fails the execution** (preserving the previous `scans/latest/`) if accounts existed but zero identities were collected
 
 ## Concurrency and Scaling

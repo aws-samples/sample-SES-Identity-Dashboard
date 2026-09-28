@@ -6,8 +6,6 @@ Build organization-wide visibility into your Amazon SES email-sending posture ac
 
 A centralized scanner in your management account discovers all member accounts, assumes a read-only role into each one, and collects SES identity information across all enabled AWS Regions. Results are stored in Amazon S3 (JSON Lines), queried with Amazon Athena, and visualized with Amazon QuickSight.
 
-Standalone accounts (not part of an AWS Organization) are supported too: set `ScanMode` to `self` and the scanner reads SES identities in its own account directly, with no cross-account role and no Organizations dependency.
-
 ## Options
 
 | Option | Best For | Scan Time |
@@ -15,21 +13,10 @@ Standalone accounts (not part of an AWS Organization) are supported too: set `Sc
 | Option 1: Single Lambda | < 50 accounts | Sequential; must finish within the 15-minute Lambda timeout |
 | Option 2: Step Functions | 50+ accounts | Parallel (up to 40 concurrent); ~3–5 minutes for 280 accounts |
 
-## Scan Modes
-
-Both options accept a `ScanMode` parameter:
-
-| Mode | Behavior | Reader-role StackSet needed? |
-|------|----------|------------------------------|
-| `organization` (default) | Discovers all active accounts via AWS Organizations and assumes the `SES-Identity-Reader` role in each. Automatically falls back to a self-scan if AWS Organizations is not available. | Yes (Step 1 below) |
-| `self` | Scans only the account the stack is deployed into, using the scanner Lambda's own execution role. No `organizations:ListAccounts` call and no cross-account role assumption. | No — skip Step 1 |
-
-For `organization` mode, supply `OrganizationId` and `ExternalId`. For `self` mode, leave both blank.
-
 ## Repository Structure
 
 ```
-sample-SES-Identity-Dashboard/
+ses-identity-dashboard/
 ├── README.md
 ├── LICENSE
 ├── option-1/
@@ -41,18 +28,9 @@ sample-SES-Identity-Dashboard/
     └── README.md                       # Option 2 specific instructions
 ```
 
-Clone the repository:
-
-```bash
-git clone https://github.com/aws-samples/sample-SES-Identity-Dashboard.git
-cd sample-SES-Identity-Dashboard
-```
-
 ## Quick Start (Option 1)
 
 ### Step 1: Deploy the IAM Role to Member Accounts
-
-> Skip this step entirely if you are deploying in `self` scan mode.
 
 Deploy `option-1/ses-reader-role.yaml` via CloudFormation StackSets to all member accounts.
 
@@ -82,12 +60,11 @@ aws cloudformation create-stack-instances \
 
 ### Step 2: Deploy the Scanner Stack
 
-Deploy `option-1/ses-scanner-stack.yaml` to your management account (or standalone account).
+Deploy `option-1/ses-scanner-stack.yaml` to your management account.
 
 **Parameters:**
-- `ScanMode` — `organization` (default) scans every account in your AWS Organization; `self` scans only the account you deploy into (see [Scan Modes](#scan-modes))
-- `OrganizationId` — Your organization ID (`o-xxxxxxxxxx`); scopes cross-account `sts:AssumeRole` via an `aws:ResourceOrgID` condition. Required for `organization` mode; leave blank for `self`
-- `ExternalId` — The same value you generated in Step 1. Required for `organization` mode; leave blank for `self`
+- `OrganizationId` — Your organization ID (`o-xxxxxxxxxx`); scopes cross-account `sts:AssumeRole` via an `aws:ResourceOrgID` condition
+- `ExternalId` — The same value you generated in Step 1
 - `ScannerRoleName` — Must match Step 1 (default `SES-Identity-Scanner-Role`)
 - `AlertEmail` — Email address that receives scan-error summaries and CloudWatch alarms
 - `ScheduleExpression` — Scan frequency (default: `rate(1 day)`)
@@ -97,21 +74,8 @@ aws cloudformation deploy \
   --template-file option-1/ses-scanner-stack.yaml \
   --stack-name ses-identity-dashboard \
   --parameter-overrides \
-      ScanMode=organization \
       OrganizationId=o-xxxxxxxxxx \
       ExternalId=<YOUR_GENERATED_SECRET> \
-      AlertEmail=you@example.com \
-  --capabilities CAPABILITY_NAMED_IAM
-```
-
-**Standalone account?** Deploy with `ScanMode=self` and omit `OrganizationId`/`ExternalId`:
-
-```bash
-aws cloudformation deploy \
-  --template-file option-1/ses-scanner-stack.yaml \
-  --stack-name ses-identity-dashboard \
-  --parameter-overrides \
-      ScanMode=self \
       AlertEmail=you@example.com \
   --capabilities CAPABILITY_NAMED_IAM
 ```
@@ -144,16 +108,6 @@ GROUP BY account_id
 ORDER BY total_identities DESC;
 ```
 
-More queries: `option-1/sample-athena-queries.sql`.
-
-### Step 5: Visualize with QuickSight
-
-Create a QuickSight dataset using Athena as the data source, select the `ses_identities` table from the `ses_identity_dashboard` database, and import into SPICE. Build visualizations (identities by account, verified vs. unverified, identities by Region) and schedule the SPICE refresh to run after the daily scan.
-
-## Option 2 (Step Functions)
-
-For 50+ accounts, use the Step Functions version. See [`option-2/README.md`](option-2/README.md) for full instructions. Option 2 supports the same `ScanMode` parameter and produces the same data format; it creates its own Glue database (`ses_identity_dashboard_sfn`) so both options can coexist in one account.
-
 ## Data Schema
 
 Each scan produces JSON Lines with the following fields:
@@ -181,7 +135,7 @@ A run summary — accounts scanned, identities collected, and any per-account, p
 - **ExternalId is a per-deployment secret** passed as a `NoEcho` parameter — generate a unique value; do not hardcode or publish it.
 - The reader role is strictly read-only, granting only `ses:ListEmailIdentities`, `ses:GetEmailIdentity`, and `ec2:DescribeRegions`.
 - Cross-account `sts:AssumeRole` from the scanner is scoped with an `aws:ResourceOrgID` condition.
-- Both S3 buckets enforce full public-access block, TLS-only access, SSE-S3 encryption, and lifecycle rules. Because versioning is enabled, `NoncurrentVersionExpiration` rules cover the continuously-overwritten live prefixes (`scans/latest/`, `scans/summary/`, `athena-results/`) as well as `scans/archive/`, so old copies of identity data do not accumulate indefinitely while the current fail-closed pointer is preserved.
+- Both S3 buckets enforce full public-access block, TLS-only access, SSE-S3 encryption, and lifecycle rules including noncurrent-version expiration.
 - Athena queries run in an enforced, encrypted workgroup whose results land inside the hardened bucket.
 - Scanner Lambda logs to an explicit CloudWatch log group with a finite retention period; SES identity names are not written to logs.
 - StackSets auto-deployment covers new accounts automatically.
@@ -203,7 +157,7 @@ A run summary — accounts scanned, identities collected, and any per-account, p
 # Delete scanner stack
 aws cloudformation delete-stack --stack-name ses-identity-dashboard
 
-# Delete StackSet instances then StackSet (organization mode only)
+# Delete StackSet instances then StackSet
 aws cloudformation delete-stack-instances \
   --stack-set-name ses-identity-reader-role \
   --deployment-targets OrganizationalUnitIds=<YOUR_ROOT_ID> \
@@ -211,8 +165,6 @@ aws cloudformation delete-stack-instances \
 
 aws cloudformation delete-stack-set --stack-set-name ses-identity-reader-role
 ```
-
-Empty and delete the S3 buckets manually if they were not removed by stack deletion (buckets with objects require manual emptying).
 
 ## License
 

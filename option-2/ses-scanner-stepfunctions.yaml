@@ -2,38 +2,20 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Centralized SES Identity Scanner — Step Functions Version (50+ Accounts)
 
 Parameters:
-  ScanMode:
-    Type: String
-    Default: organization
-    AllowedValues:
-      - organization
-      - self
-    Description: >-
-      organization (default) discovers every active account in your AWS
-      Organization and assumes the SES-Identity-Reader role in each. self scans
-      only the account this stack is deployed into using the per-account
-      scanner Lambda's own execution role — no organizations:ListAccounts call
-      and no cross-account role assumption, so the reader-role StackSet is not
-      needed. In organization mode the ListAccounts Lambda automatically falls
-      back to a self-scan if AWS Organizations is not available.
-
   OrganizationId:
     Type: String
-    Default: ''
     Description: >-
-      Your AWS Organization ID. Required for organization scan mode; scopes
-      cross-account sts:AssumeRole via an aws:ResourceOrgID condition. Leave
-      blank for self scan mode.
-    AllowedPattern: '^(o-[a-z0-9]{10,32})?$'
+      Your AWS Organization ID. Scopes cross-account sts:AssumeRole via an
+      aws:ResourceOrgID condition.
+    AllowedPattern: '^o-[a-z0-9]{10,32}$'
 
   ExternalId:
     Type: String
-    Default: ''
     Description: >-
       The same per-deployment secret you supplied to the reader-role StackSet
-      (option-1/ses-reader-role.yaml). Passed to sts:AssumeRole as the
-      ExternalId. Required for organization scan mode; leave blank for self.
+      (option-1/ses-reader-role.yaml). Passed to sts:AssumeRole as the ExternalId.
     NoEcho: true
+    MinLength: 8
     MaxLength: 128
 
   ScannerRoleName:
@@ -151,8 +133,9 @@ Resources:
         RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
-          # Archived historical scans: current versions expire after 90 days
-          # (transitioned to IA at 30 days), noncurrent versions after 90 days.
+          # Scoped to scans/archive/ only, so scans/latest/, scans/summary/ and
+          # athena-results/ (the preserved "previous good scan" and query output)
+          # are never expired by lifecycle.
           - Id: ExpireOldScans
             Status: Enabled
             Prefix: scans/archive/
@@ -165,28 +148,6 @@ Resources:
             Transitions:
               - TransitionInDays: 30
                 StorageClass: STANDARD_IA
-          # Live, continuously-overwritten prefixes. Versioning is enabled, so
-          # each daily overwrite leaves a retained noncurrent version that would
-          # otherwise accumulate copies of every org email address/domain
-          # indefinitely. These rules expire only the NONCURRENT versions — the
-          # current fail-closed "latest" pointer is always preserved. Do NOT add
-          # ExpirationInDays to scans/latest/ or scans/summary/.
-          - Id: ExpireNoncurrentLatest
-            Status: Enabled
-            Prefix: scans/latest/
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 30
-          - Id: ExpireNoncurrentSummary
-            Status: Enabled
-            Prefix: scans/summary/
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 30
-          - Id: ExpireNoncurrentAthenaResults
-            Status: Enabled
-            Prefix: athena-results/
-            ExpirationInDays: 30
-            NoncurrentVersionExpiration:
-              NoncurrentDays: 30
 
   ScanResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -252,7 +213,6 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Harmless in self mode; not called when SCAN_MODE=self.
               - Effect: Allow
                 Action:
                   - organizations:ListAccounts
@@ -284,13 +244,6 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:ResourceOrgID: !Ref OrganizationId
-              # SES read access for self mode (scanning this account directly)
-              # and for the organization-mode self fallback.
-              - Effect: Allow
-                Action:
-                  - ses:ListEmailIdentities
-                  - ses:GetEmailIdentity
-                Resource: '*'
               - Effect: Allow
                 Action:
                   - s3:PutObject
@@ -401,7 +354,7 @@ Resources:
   ListAccountsFunction:
     Type: AWS::Lambda::Function
     # checkov:skip=CKV_AWS_116:Invoked synchronously as a Step Functions Task; a Lambda DLQ only applies to asynchronous invocations.
-    # checkov:skip=CKV_AWS_117:Function only calls the AWS Organizations/STS APIs; VPC attachment would require NAT/VPC endpoints for no security benefit.
+    # checkov:skip=CKV_AWS_117:Function only calls the AWS Organizations API; VPC attachment would require NAT/VPC endpoints for no security benefit.
     DependsOn: ListAccountsLogGroup
     Properties:
       FunctionName: SES-Scanner-ListAccounts
@@ -411,45 +364,23 @@ Resources:
       Timeout: 60
       MemorySize: 128
       ReservedConcurrentExecutions: 2
-      Environment:
-        Variables:
-          SCAN_MODE: !Ref ScanMode
       Code:
         ZipFile: |
           import boto3
-          import os
-
-          def self_account():
-              acct = boto3.client('sts').get_caller_identity()['Account']
-              return [{'account_id': acct, 'account_name': 'self', 'self_scan': True}]
+          import json
 
           def lambda_handler(event, context):
-              scan_mode = os.environ.get('SCAN_MODE', 'organization')
-
-              # self mode: scan only this account, no Organizations call.
-              if scan_mode == 'self':
-                  accounts = self_account()
-                  print(f"Scan mode self: 1 account")
-                  return {'accounts': accounts, 'account_count': len(accounts)}
-
-              # organization mode: list all active accounts; fall back to a
-              # self-scan if Organizations is not available.
-              try:
-                  org = boto3.client('organizations')
-                  accounts = []
-                  paginator = org.get_paginator('list_accounts')
-                  for page in paginator.paginate():
-                      accounts.extend([
-                          {'account_id': a['Id'], 'account_name': a['Name'], 'self_scan': False}
-                          for a in page['Accounts']
-                          if a['Status'] == 'ACTIVE'
-                      ])
-                  print(f"Found {len(accounts)} active accounts")
-                  return {'accounts': accounts, 'account_count': len(accounts)}
-              except Exception as e:
-                  print(f"WARN: Organizations not available ({type(e).__name__}); falling back to self-scan.")
-                  accounts = self_account()
-                  return {'accounts': accounts, 'account_count': len(accounts)}
+              org = boto3.client('organizations')
+              accounts = []
+              paginator = org.get_paginator('list_accounts')
+              for page in paginator.paginate():
+                  accounts.extend([
+                      {'account_id': a['Id'], 'account_name': a['Name']}
+                      for a in page['Accounts']
+                      if a['Status'] == 'ACTIVE'
+                  ])
+              print(f"Found {len(accounts)} active accounts")
+              return {'accounts': accounts, 'account_count': len(accounts)}
 
   # Lambda: Per-Account Scanner
   PerAccountScannerFunction:
@@ -477,8 +408,8 @@ Resources:
           import os
           from datetime import datetime, timezone
 
-          def get_enabled_regions(session):
-              ec2 = session.client('ec2')
+          def get_enabled_regions():
+              ec2 = boto3.client('ec2')
               regions = ec2.describe_regions(
                   Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}]
               )
@@ -486,42 +417,36 @@ Resources:
 
           def lambda_handler(event, context):
               account_id = event['account_id']
-              # self_scan: read this account directly with the execution role,
-              # skipping the cross-account AssumeRole entirely.
-              self_scan = event.get('self_scan', False)
               bucket = os.environ['BUCKET_NAME']
-              external_id = os.environ.get('EXTERNAL_ID', '')
+              external_id = os.environ['EXTERNAL_ID']
+              sts = boto3.client('sts')
               s3 = boto3.client('s3')
               results = []
               regions_failed = []
               identities_failed = 0
 
-              if self_scan:
-                  session = boto3.Session()
-              else:
-                  sts = boto3.client('sts')
-                  try:
-                      creds = sts.assume_role(
-                          RoleArn=f'arn:aws:iam::{account_id}:role/SES-Identity-Reader',
-                          RoleSessionName='ses-scanner',
-                          ExternalId=external_id
-                      )['Credentials']
-                  except Exception as e:
-                      # Report the failure in-band so Consolidate can count it and alert.
-                      print(f"ERROR: Cannot AssumeRole into {account_id}: {type(e).__name__}")
-                      return {'account_id': account_id, 'identities': 0, 's3_key': None,
-                              'regions_failed': [], 'identities_failed': 0,
-                              'error': f"{type(e).__name__}: {e}"}
-                  session = boto3.Session(
-                      aws_access_key_id=creds['AccessKeyId'],
-                      aws_secret_access_key=creds['SecretAccessKey'],
-                      aws_session_token=creds['SessionToken']
-                  )
+              try:
+                  creds = sts.assume_role(
+                      RoleArn=f'arn:aws:iam::{account_id}:role/SES-Identity-Reader',
+                      RoleSessionName='ses-scanner',
+                      ExternalId=external_id
+                  )['Credentials']
+              except Exception as e:
+                  # Report the failure in-band so Consolidate can count it and alert.
+                  print(f"ERROR: Cannot AssumeRole into {account_id}: {type(e).__name__}")
+                  return {'account_id': account_id, 'identities': 0, 's3_key': None,
+                          'regions_failed': [], 'identities_failed': 0,
+                          'error': f"{type(e).__name__}: {e}"}
 
-              regions = get_enabled_regions(session)
+              regions = get_enabled_regions()
               for region in regions:
                   try:
-                      ses = session.client('sesv2', region_name=region)
+                      ses = boto3.client('sesv2',
+                          region_name=region,
+                          aws_access_key_id=creds['AccessKeyId'],
+                          aws_secret_access_key=creds['SecretAccessKey'],
+                          aws_session_token=creds['SessionToken']
+                      )
                       identities = []
                       next_token = None
                       while True:
@@ -909,8 +834,6 @@ Resources:
               Type: string
 
 Outputs:
-  ScanMode:
-    Value: !Ref ScanMode
   StateMachineArn:
     Value: !GetAtt ScannerStateMachine.Arn
   BucketName:

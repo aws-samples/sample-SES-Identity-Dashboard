@@ -1,0 +1,872 @@
+{
+  "DataSetIdentifierDeclarations": [
+    {
+      "Identifier": "sesds",
+      "DataSetArn": "arn:aws:quicksight:us-east-1:111122223333:dataset/REPLACE_WITH_YOUR_DATASET_ID"
+    }
+  ],
+  "Sheets": [
+    {
+      "SheetId": "overview",
+      "Name": "Overview",
+      "Visuals": [
+        {
+          "KPIVisual": {
+            "VisualId": "kpiTotal",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Total Identities"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "CategoricalMeasureField": {
+                      "FieldId": "k_total",
+                      "Column": {
+                        "DataSetIdentifier": "sesds",
+                        "ColumnName": "identity_name"
+                      },
+                      "AggregationFunction": "COUNT"
+                    }
+                  }
+                ],
+                "TargetValues": [],
+                "TrendGroups": []
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "KPIVisual": {
+            "VisualId": "kpiVerified",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Verified"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "k_ver",
+                      "Column": {
+                        "DataSetIdentifier": "sesds",
+                        "ColumnName": "verified"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "SUM"
+                      }
+                    }
+                  }
+                ],
+                "TargetValues": [],
+                "TrendGroups": []
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "KPIVisual": {
+            "VisualId": "kpiDkimOk",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "DKIM OK"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "k_dkim",
+                      "Column": {
+                        "DataSetIdentifier": "sesds",
+                        "ColumnName": "dkim_ok"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "SUM"
+                      }
+                    }
+                  }
+                ],
+                "TargetValues": [],
+                "TrendGroups": []
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "KPIVisual": {
+            "VisualId": "kpiSending",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Sending Enabled"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "k_send",
+                      "Column": {
+                        "DataSetIdentifier": "sesds",
+                        "ColumnName": "sending_enabled"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "SUM"
+                      }
+                    }
+                  }
+                ],
+                "TargetValues": [],
+                "TrendGroups": []
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "KPIVisual": {
+            "VisualId": "kpiAttention",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Needs Attention"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "k_attn",
+                      "Column": {
+                        "DataSetIdentifier": "sesds",
+                        "ColumnName": "needs_attention"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "SUM"
+                      }
+                    }
+                  }
+                ],
+                "TargetValues": [],
+                "TrendGroups": []
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "BarChartVisual": {
+            "VisualId": "byAccount",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Identities by Account (drill: region, type)"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "BarChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "d_acct",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "account_id"
+                        },
+                        "HierarchyId": "acctHier"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "CategoricalMeasureField": {
+                        "FieldId": "d_cnt",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        },
+                        "AggregationFunction": "COUNT"
+                      }
+                    }
+                  ],
+                  "Colors": []
+                }
+              },
+              "SortConfiguration": {},
+              "Orientation": "HORIZONTAL",
+              "BarsArrangement": "CLUSTERED"
+            },
+            "Actions": [
+              {
+                "CustomActionId": "act_byAccount",
+                "Name": "Filter by account",
+                "Status": "ENABLED",
+                "Trigger": "DATA_POINT_CLICK",
+                "ActionOperations": [
+                  {
+                    "FilterOperation": {
+                      "SelectedFieldsConfiguration": {
+                        "SelectedFieldOptions": "ALL_FIELDS"
+                      },
+                      "TargetVisualsConfiguration": {
+                        "SameSheetTargetVisualConfiguration": {
+                          "TargetVisualOptions": "ALL_VISUALS"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "ColumnHierarchies": [
+              {
+                "ExplicitHierarchy": {
+                  "HierarchyId": "acctHier",
+                  "Columns": [
+                    {
+                      "DataSetIdentifier": "sesds",
+                      "ColumnName": "account_id"
+                    },
+                    {
+                      "DataSetIdentifier": "sesds",
+                      "ColumnName": "region"
+                    },
+                    {
+                      "DataSetIdentifier": "sesds",
+                      "ColumnName": "identity_type"
+                    }
+                  ],
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "BarChartVisual": {
+            "VisualId": "byRegion",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Identities by Region"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "BarChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "r_region",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "region"
+                        }
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "CategoricalMeasureField": {
+                        "FieldId": "r_cnt",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        },
+                        "AggregationFunction": "COUNT"
+                      }
+                    }
+                  ],
+                  "Colors": []
+                }
+              },
+              "SortConfiguration": {},
+              "Orientation": "VERTICAL",
+              "BarsArrangement": "CLUSTERED"
+            },
+            "Actions": [
+              {
+                "CustomActionId": "act_byRegion",
+                "Name": "Filter by region",
+                "Status": "ENABLED",
+                "Trigger": "DATA_POINT_CLICK",
+                "ActionOperations": [
+                  {
+                    "FilterOperation": {
+                      "SelectedFieldsConfiguration": {
+                        "SelectedFieldOptions": "ALL_FIELDS"
+                      },
+                      "TargetVisualsConfiguration": {
+                        "SameSheetTargetVisualConfiguration": {
+                          "TargetVisualOptions": "ALL_VISUALS"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "BarChartVisual": {
+            "VisualId": "dkimByAccount",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "DKIM Status by Account"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "BarChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "dk_acct",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "account_id"
+                        }
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "CategoricalMeasureField": {
+                        "FieldId": "dk_cnt",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        },
+                        "AggregationFunction": "COUNT"
+                      }
+                    }
+                  ],
+                  "Colors": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "dk_status",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "dkim_status"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {},
+              "Orientation": "HORIZONTAL",
+              "BarsArrangement": "STACKED"
+            },
+            "Actions": [
+              {
+                "CustomActionId": "act_dkimByAccount",
+                "Name": "Filter by account/DKIM",
+                "Status": "ENABLED",
+                "Trigger": "DATA_POINT_CLICK",
+                "ActionOperations": [
+                  {
+                    "FilterOperation": {
+                      "SelectedFieldsConfiguration": {
+                        "SelectedFieldOptions": "ALL_FIELDS"
+                      },
+                      "TargetVisualsConfiguration": {
+                        "SameSheetTargetVisualConfiguration": {
+                          "TargetVisualOptions": "ALL_VISUALS"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "PieChartVisual": {
+            "VisualId": "mailFrom",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "MAIL FROM Status"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "PieChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "mf_status",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "mail_from_status"
+                        }
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "CategoricalMeasureField": {
+                        "FieldId": "mf_cnt",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        },
+                        "AggregationFunction": "COUNT"
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {},
+              "DonutOptions": {
+                "ArcOptions": {
+                  "ArcThickness": "WHOLE"
+                }
+              }
+            },
+            "Actions": [
+              {
+                "CustomActionId": "act_mailFrom",
+                "Name": "Filter by MAIL FROM",
+                "Status": "ENABLED",
+                "Trigger": "DATA_POINT_CLICK",
+                "ActionOperations": [
+                  {
+                    "FilterOperation": {
+                      "SelectedFieldsConfiguration": {
+                        "SelectedFieldOptions": "ALL_FIELDS"
+                      },
+                      "TargetVisualsConfiguration": {
+                        "SameSheetTargetVisualConfiguration": {
+                          "TargetVisualOptions": "ALL_VISUALS"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "PieChartVisual": {
+            "VisualId": "keyLen",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "DKIM Key Length"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "PieChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "kl_len",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "dkim_key_length"
+                        }
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "CategoricalMeasureField": {
+                        "FieldId": "kl_cnt",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        },
+                        "AggregationFunction": "COUNT"
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {},
+              "DonutOptions": {
+                "ArcOptions": {
+                  "ArcThickness": "WHOLE"
+                }
+              }
+            },
+            "Actions": [
+              {
+                "CustomActionId": "act_keyLen",
+                "Name": "Filter by key length",
+                "Status": "ENABLED",
+                "Trigger": "DATA_POINT_CLICK",
+                "ActionOperations": [
+                  {
+                    "FilterOperation": {
+                      "SelectedFieldsConfiguration": {
+                        "SelectedFieldOptions": "ALL_FIELDS"
+                      },
+                      "TargetVisualsConfiguration": {
+                        "SameSheetTargetVisualConfiguration": {
+                          "TargetVisualOptions": "ALL_VISUALS"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "TableVisual": {
+            "VisualId": "attnTable",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Needs Attention"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "TableAggregatedFieldWells": {
+                  "GroupBy": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "t_acct",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "account_id"
+                        }
+                      }
+                    },
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "t_region",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "region"
+                        }
+                      }
+                    },
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "t_name",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        }
+                      }
+                    },
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "t_type",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_type"
+                        }
+                      }
+                    },
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "t_dkim",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "dkim_status"
+                        }
+                      }
+                    },
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "t_mf",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "mail_from_status"
+                        }
+                      }
+                    }
+                  ],
+                  "Values": []
+                }
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": []
+          }
+        },
+        {
+          "HeatMapVisual": {
+            "VisualId": "regionAcctHeat",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Region x Account (identity count)"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE"
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "HeatMapAggregatedFieldWells": {
+                  "Rows": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "h_acct",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "account_id"
+                        }
+                      }
+                    }
+                  ],
+                  "Columns": [
+                    {
+                      "CategoricalDimensionField": {
+                        "FieldId": "h_region",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "region"
+                        }
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "CategoricalMeasureField": {
+                        "FieldId": "h_cnt",
+                        "Column": {
+                          "DataSetIdentifier": "sesds",
+                          "ColumnName": "identity_name"
+                        },
+                        "AggregationFunction": "COUNT"
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {}
+            },
+            "ColumnHierarchies": [],
+            "Actions": [
+              {
+                "CustomActionId": "act_regionAcctHeat",
+                "Name": "Filter by region/account",
+                "Status": "ENABLED",
+                "Trigger": "DATA_POINT_CLICK",
+                "ActionOperations": [
+                  {
+                    "FilterOperation": {
+                      "SelectedFieldsConfiguration": {
+                        "SelectedFieldOptions": "ALL_FIELDS"
+                      },
+                      "TargetVisualsConfiguration": {
+                        "SameSheetTargetVisualConfiguration": {
+                          "TargetVisualOptions": "ALL_VISUALS"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "Layouts": [
+        {
+          "Configuration": {
+            "GridLayout": {
+              "Elements": [
+                {
+                  "ElementId": "kpiTotal",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 6,
+                  "RowSpan": 6
+                },
+                {
+                  "ElementId": "kpiVerified",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 6,
+                  "RowSpan": 6
+                },
+                {
+                  "ElementId": "kpiDkimOk",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 6,
+                  "RowSpan": 6
+                },
+                {
+                  "ElementId": "kpiSending",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 6,
+                  "RowSpan": 6
+                },
+                {
+                  "ElementId": "kpiAttention",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 6,
+                  "RowSpan": 6
+                },
+                {
+                  "ElementId": "byAccount",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 18,
+                  "RowSpan": 14
+                },
+                {
+                  "ElementId": "byRegion",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 18,
+                  "RowSpan": 14
+                },
+                {
+                  "ElementId": "dkimByAccount",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 18,
+                  "RowSpan": 14
+                },
+                {
+                  "ElementId": "mailFrom",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 9,
+                  "RowSpan": 12
+                },
+                {
+                  "ElementId": "keyLen",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 9,
+                  "RowSpan": 12
+                },
+                {
+                  "ElementId": "attnTable",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 36,
+                  "RowSpan": 16
+                },
+                {
+                  "ElementId": "regionAcctHeat",
+                  "ElementType": "VISUAL",
+                  "ColumnSpan": 18,
+                  "RowSpan": 14
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ContentType": "INTERACTIVE"
+    }
+  ],
+  "CalculatedFields": [
+    {
+      "DataSetIdentifier": "sesds",
+      "Name": "dkim_ok",
+      "Expression": "ifelse({dkim_status}='SUCCESS',1,0)"
+    },
+    {
+      "DataSetIdentifier": "sesds",
+      "Name": "needs_attention",
+      "Expression": "ifelse(verified=0 OR ({identity_type}='DOMAIN' AND {dkim_status}<>'SUCCESS'),1,0)"
+    }
+  ],
+  "ParameterDeclarations": [],
+  "FilterGroups": [
+    {
+      "FilterGroupId": "fg_attn",
+      "Filters": [
+        {
+          "NumericEqualityFilter": {
+            "FilterId": "flt_attn",
+            "Column": {
+              "DataSetIdentifier": "sesds",
+              "ColumnName": "needs_attention"
+            },
+            "Value": 1.0,
+            "MatchOperator": "EQUALS",
+            "NullOption": "NON_NULLS_ONLY"
+          }
+        }
+      ],
+      "ScopeConfiguration": {
+        "SelectedSheets": {
+          "SheetVisualScopingConfigurations": [
+            {
+              "SheetId": "overview",
+              "Scope": "SELECTED_VISUALS",
+              "VisualIds": [
+                "attnTable"
+              ]
+            }
+          ]
+        }
+      },
+      "Status": "ENABLED",
+      "CrossDataset": "SINGLE_DATASET"
+    }
+  ]
+}
